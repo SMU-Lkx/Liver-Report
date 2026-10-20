@@ -1,0 +1,49 @@
+save_name: 261015_main_textgen
+save_dir: /home/longkaixing/Liver/model_save
+
+# ---- 数据 ----
+data: /home/longkaixing/Liver/data/data.xlsx
+sampler: /home/longkaixing/Liver/data/split_idx/260925_SSL
+cache_dir: /data/longkaixing/Liver/Multiphase
+mask_mode: venous
+max_len: 768
+verify_paths: false
+
+# ---- 模型 ----
+in_ch: 4
+base_channels: 32
+d_model: 256
+nhead: 8
+enc_layers: 2            # visual transformer
+dec_layers: 4            # 文本解码器
+dim_ff: 512
+dropout: 0.2
+vis_grid: [7, 7, 5]      # 28x28x20 特征 -> 245 个 visual token
+pretrained_backbone: /home/longkaixing/Liver/model_save/261013_pretrain_NCAD2V/backbone_NCAD2V_best.pt
+
+# ---- 损失/正则(MRI2Rep 同构) ----
+label_smoothing: 0.1
+word_dropout_p: 0.15
+ss_max_prob: 0.3         # scheduled sampling 上限
+ss_start_epoch: 10
+ss_warmup_epochs: 20
+aux_weight: 0.0          # >0 时需配 label_csv(路由标签), 暂留接口
+label_csv: ""
+
+# ---- 训练 ----
+batch_size: 4
+num_workers: 4
+epoch: 50
+lr_backbone: 0.000005    # 预训练 backbone 慢速
+lr_decoder: 0.00005
+min_lr: 0.0000001
+weight_decay: 0.0001
+max_grad_norm: 1.0
+early_stop: 10
+seed: 42
+use_bf16: true
+val_max_batches: 32      # 验证集评估上限(每epoch)
+val_generate_batches: 8 # 生成/BLEU 评估的 batch 数
+max_keep_epochs: 0
+device: "npu:7"
+resume: true

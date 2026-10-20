@@ -1,0 +1,56 @@
+# config/CT2Rep/261020_CT2Rep.yaml
+# - train/train_CT2Rep.py
+save_name: 261020_CT2Rep
+save_dir: /home/longkaixing/Liver/model_save
+
+# ---- 数据 ----
+data: /home/longkaixing/Liver/data/data.xlsx
+sampler: /home/longkaixing/Liver/data/split_idx/260925_SSL
+cache_dir: /data/longkaixing/Liver/Multiphase
+
+# ---- 训练 ----
+device: npu:0
+seed: 42
+epoch: 100
+early_stop: 20
+batch_size: 1            # 论文设定; 显存富余可试 2
+num_workers: 0
+max_len: 768
+mask_mode: venous
+verify_paths: false
+label_smoothing: 0.0
+use_bf16: 1
+max_grad_norm: 1.0
+lr_ve: 5.0e-5            # 论文: 视觉提取器学习率
+lr_ed: 1.0e-4            # 论文: 其余参数学习率
+step_size: 15            # 论文只披露 gamma=0.1, step_size 未披露, 可调
+val_max_batches: 204
+val_generate_batches: 2  # RM 采样是 O(T^2) 重算, 每 epoch 只生成 2 例看趋势
+resume: false
+
+# ---- CT2Rep 模型结构 (论文: dim=512, 3 层, 8 头, RM 3 slots) ----
+num_layers: 3
+d_model: 512
+d_ff: 2048
+num_heads: 8
+dropout: 0.1
+rm_num_slots: 3
+rm_num_heads: 8
+rm_d_model: 512
+d_vf: 512
+drop_prob_lm: 0.5
+max_seq_length: 512      # char 级 >=512, 否则截断 EOS
+use_bn: 0
+bos_idx: 1
+eos_idx: 2
+pad_idx: 0
+
+# ---- 采样 ----
+sample_method: greedy
+beam_size: 1
+sample_n: 1
+group_size: 1
+temperature: 1.0
+output_logsoftmax: 1
+decoding_constraint: 0
+block_trigrams: 0
