@@ -11,7 +11,7 @@
 Models/CT2Rep/
 ├── model/
 │   ├── CT2Rep.py
-│   ├── ctvit.py            # 3D ViT（spatial+causal transformer）+ VQ 量化，use_vgg_and_gan 守卫
+│   ├── ctvit.py            # 3D ViT（spatial+causal transformer）+ VQ 量化
 │   └── attention.py        # Attention/Transformer/ContinuousPositionBias
 ├── modules/                # 文本侧（官方 R2Gen 代码）
 │   ├── encoder_decoder.py  # Transformer encoder + RM decoder + MCLN
