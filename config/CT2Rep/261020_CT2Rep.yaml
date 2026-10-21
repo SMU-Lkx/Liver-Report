@@ -27,6 +27,7 @@ step_size: 15            # 论文只披露 gamma=0.1, step_size 未披露, 可�
 val_max_batches: 204
 val_generate_batches: 2  # RM 采样是 O(T^2) 重算, 每 epoch 只生成 2 例看趋势
 resume: false
+save_freq: 5  # 每 N 轮保存一个模型权重 epoch.pt。
 
 # ---- CT2Rep 模型结构 (论文: dim=512, 3 层, 8 头, RM 3 slots) ----
 num_layers: 3
@@ -54,3 +55,4 @@ temperature: 1.0
 output_logsoftmax: 1
 decoding_constraint: 0
 block_trigrams: 0
+save_sample_num: 4  #

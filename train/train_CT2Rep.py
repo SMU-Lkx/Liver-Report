@@ -43,14 +43,14 @@ sys.path.insert(0, str(CT2REP_CODE))
 from data.Dataset.Multiphase_dataset import CharTokenizer, MultiphaseReport, multiphase_collate
 from Models.CT2Rep.model.CT2Rep import CT2Rep, CharTokenizerAdapter
 from util.train_utils import (CkptManager, EpochCSVLogger, load_config, log_setup, resume_from_ckpt,
-                              save_config, setup_seed, amp_context)
-from util.text_utils import ngram_counts, char_bleu
+                              save_config, setup_seed, amp_context, text_sampling)
+from util.text_utils import char_bleu
 
 PAD, BOS, EOS = 0, 1, 2
 
 def build_dataset(args, split, tok):
     pid_csv = join(args.sampler, f"{split}_idx.csv")
-    return MultiphaseReport(                       # ← 原装的, 和 Stage-B 同一个类
+    return MultiphaseReport(
         data_path=args.data, pid_csv=pid_csv, tokenizer=tok,
         cache_dir=args.cache_dir, max_len=int(args.max_len),
         mask_mode=args.mask_mode,
@@ -61,13 +61,13 @@ def train_one_epoch(model, loader, optimizer, device, args, epoch):
     model.train()
     sums = {"nll": 0.0, "n": 0}
     pbar = tqdm(loader, desc=f"CT2Rep Ep {epoch:02d}/{args.epoch}")
-    for batch in pbar:                             # ← 和 Stage-B 同款循环
+    for batch in pbar:
         x = batch["x"].to(device, non_blocking=True)
         y = batch["y"].to(device, non_blocking=True)
         with amp_context(bool(args.use_bf16)):
-            out = model(x, y)                      # (B,L-1,V) log-probs, 内部已移位
-            loss = F.nll_loss(out.reshape(-1, out.size(-1)), y[:, 1:].reshape(-1),
-                              ignore_index=PAD, label_smoothing=float(args.label_smoothing))
+            out = model(x, y)   # (B,L-1,V) log-probs, 内部已移位
+            # 负对数似然+PAD填0，保证不同batch的变长序列可计算损失
+            loss = F.nll_loss(out.reshape(-1, out.size(-1)), y[:, 1:].reshape(-1), ignore_index=PAD)
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         if float(args.max_grad_norm) > 0:
@@ -78,11 +78,10 @@ def train_one_epoch(model, loader, optimizer, device, args, epoch):
     return sums["nll"] / max(sums["n"], 1)
 
 @torch.no_grad()
-def validate(model, loader, device, args, tok_adapt):
+def validate(model, loader, device, args, tok_adapt, epoch=None, save_path=None):
     model.eval()
     nll, n = 0.0, 0
-    refs, hyps = [], []
-    gen_batches = 0
+    records = []                                   # [{"pid", "gen", "ref"}, ...]
     for batch in tqdm(loader, desc="Val", leave=False):
         if n >= int(args.val_max_batches):
             break
@@ -92,20 +91,32 @@ def validate(model, loader, device, args, tok_adapt):
             out = model(x, y)
             nll += float(F.nll_loss(out.reshape(-1, out.size(-1)),
                                     y[:, 1:].reshape(-1), ignore_index=PAD).item())
-        if gen_batches < int(args.val_generate_batches):
-            seq = model.generate(x)                # greedy
+        if len(records) < int(args.save_sample_num):   # 攒够样本就停生成 (RM采样是O(T^2))
+            seq = model.generate(x)                      # greedy
             for i in range(x.size(0)):
-                hyps.append(tok_adapt.decode(seq[i].cpu().tolist()))
-                refs.append(tok_adapt.decode(y[i].cpu().tolist()))
-            gen_batches += 1
+                records.append({
+                    "pid": batch["pid"][i],
+                    "gen": tok_adapt.decode(seq[i].cpu().tolist()),
+                    "ref": tok_adapt.decode(y[i].cpu().tolist()),
+                })
         n += 1
-    bleu = char_bleu([list(r) for r in refs], [list(h) for h in hyps]) if refs else 0.0
-    return {"nll": nll / max(n, 1), "bleu2": bleu, "evaluated": n}
+
+    metrics = {"nll": nll / max(n, 1), "bleu2": 0.0, "evaluated": n}
+    if records:
+        metrics["bleu2"] = char_bleu([list(r["ref"]) for r in records],
+                                     [list(r["gen"]) for r in records])
+        if save_path and epoch is not None:
+            st = text_sampling(records, save_path, epoch)      # → out_sample/val_epXXXX.txt/.html
+            metrics["gen_len"] = st["avg_gen_len"]
+            metrics["rep_ratio"] = st["rep_ratio"]
+            logging.info(f"[Sample ep{epoch}] len={st['avg_gen_len']:.0f}/{st['avg_ref_len']:.0f} "
+                         f"rep={st['rep_ratio']:.2f} | {records[0]['gen'][:80]}...")
+    return metrics
 
 def main():
-    setproctitle.setproctitle("lkxCT2Rep10/20")
+    setproctitle.setproctitle("lkxCT2Rep10/24")
     parser = argparse.ArgumentParser()
-    parser.add_argument("--cfg", type=str,
+    parser.add_argument("--cfg", type=str,  # todo
         default="/home/longkaixing/Liver/config/CT2Rep/261020_CT2Rep.yaml")
     args, _ = parser.parse_known_args()
     config = load_config(args.cfg)
@@ -129,31 +140,25 @@ def main():
     train_ds = build_dataset(args, "train", tok)
     val_ds = build_dataset(args, "val", tok)
     train_loader = DataLoader(train_ds, batch_size=int(args.batch_size), shuffle=True,
-                              num_workers=int(args.num_workers), pin_memory=True,
-                              collate_fn=multiphase_collate, drop_last=True)
+                              num_workers=int(args.num_workers), collate_fn=multiphase_collate, drop_last=True)
     val_loader = DataLoader(val_ds, batch_size=int(args.batch_size), shuffle=False,
-                            num_workers=int(args.num_workers), pin_memory=True,
-                            collate_fn=multiphase_collate)
+                            num_workers=int(args.num_workers), collate_fn=multiphase_collate)
     logging.info(f"[Dataset] Train={len(train_ds)} | Val={len(val_ds)}")
     # ---- 模型构建 ----
-    model = CT2Rep(args, tok_adapt).to(device)     # args 需携带模型结构字段(见 yaml)
+    model = CT2Rep(args, tok_adapt).to(device)
     n = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logging.info(f"[Model] trainable params: {n / 1e6:.2f}M")
 
     # 论文: 视觉提取器 lr=5e-5, 其余 lr=1e-4, Adam(betas 0.9/0.99), StepLR(gamma 0.1)
-    ve_params = [p for n, p in model.named_parameters()
-                 if n.startswith("ctvit") or n.startswith("fc.")]
-    ve_ids = {id(p) for p in ve_params}
-    other_params = [p for n, p in model.named_parameters()
-                    if not (n.startswith("ctvit") or n.startswith("fc."))]
+    ve_params = [p for n, p in model.named_parameters() if n.startswith("ctvit") or n.startswith("fc.")]
+    other_params = [p for n, p in model.named_parameters() if not (n.startswith("ctvit") or n.startswith("fc."))]
     optimizer = torch.optim.Adam([
         {"params": ve_params,    "lr": float(args.lr_ve)},
         {"params": other_params, "lr": float(args.lr_ed)},
     ], betas=(0.9, 0.99))
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=int(args.step_size), gamma=0.1)
     # ---- 断点恢复 ----
-    ckpt_mgr = CkptManager(join(save_path, "ckpt"),
-                           max_keep_epochs=int(getattr(args, "max_keep_epochs", 0)))
+    ckpt_mgr = CkptManager(join(save_path, "ckpt"), max_keep_epochs=args.max_keep_epochs, save_freq=args.save_freq)
     start_epoch, best_val, no_improve = 1, float("inf"), 0
     if bool(getattr(args, "resume", False)):
         ckpt = ckpt_mgr.load_last(map_location=device)
@@ -161,9 +166,8 @@ def main():
             start_epoch, best_val = resume_from_ckpt(ckpt, model, optimizer, scheduler)
             no_improve = int(ckpt.get("no_improve", 0))
             logging.info(f"[Resume] from epoch {start_epoch}, best_val={best_val:.6f}")
-
-    csv_logger = EpochCSVLogger(save_path, "ct2rep_metrics.csv",
-                                resume=bool(getattr(args, "resume", False)))
+    # ---- 训练日志记录 ----
+    csv_logger = EpochCSVLogger(save_path, "ct2rep_metrics.csv", resume=bool(getattr(args, "resume", False)))
     # ---- 训练循环 ----
     start_time = time.time()
     for epoch in range(start_epoch, int(args.epoch) + 1):

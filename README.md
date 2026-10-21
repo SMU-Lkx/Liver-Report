@@ -38,7 +38,7 @@ Liver/
 | **CT2Rep** | [CT2Rep: Automated Radiology Report Generation for 3D Medical Imaging](https://arxiv.org/abs/2403.06801) (MICCAI 2024) | [ibrahimethemhamamci/CT2Rep](https://github.com/ibrahimethemhamamci/CT2Rep) | 正在复现 |
 | **Merlin** | [Merlin: a computed tomography vision–language foundation model and dataset](https://arxiv.org/abs/2406.06512) (Nature 2026) | [StanfordMIMI/Merlin](https://github.com/StanfordMIMI/Merlin) | 待复现（zero-shot） |
 | **RadFM** | [Towards Generalist Foundation Model for Radiology by Leveraging Web-scale 2D&3D Medical Data](https://arxiv.org/abs/2308.02442) (Nature Communications 2025) | [chaoyi-wu/RadFM](https://github.com/chaoyi-wu/RadFM) | 待复现 |
-| **MRI2Rep** | [MRI2Rep: Autoregressive Structured Report Generation for 3D Liver MRI](https://arxiv.org/abs/2606.25279) | [Alena-Xinran/MRI2Rep](https://github.com/Alena-Xinran/MRI2Rep) | 正在复现 |
+| **MRI2Rep** | [MRI2Rep: Autoregressive Structured Report Generation for 3D Liver MRI](https://arxiv.org/abs/2606.25279) (MICCAI 2026) | [Alena-Xinran/MRI2Rep](https://github.com/Alena-Xinran/MRI2Rep) | 正在复现 |
 | **Astra** | [Astra: a generalizable report generation foundation model for 3D computed tomography](https://arxiv.org/abs/2605.31437) | [zh-Wang-Med/Astra](https://github.com/zh-Wang-Med/Astra) | 待复现（zero-shot） |
 
 > 标注 *zero-shot* 的方法直接在私有数据上推理评估，不微调；其余方法需迁移/复现训练流程。

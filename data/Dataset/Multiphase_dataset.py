@@ -25,7 +25,7 @@ import json
 import os, tqdm
 from pathlib import Path
 from typing import Dict, List, Sequence
-
+from collections import Counter
 import numpy as np
 import pandas as pd
 import torch
@@ -101,12 +101,13 @@ class CharTokenizer:
 
     @classmethod
     def build(cls, texts: Sequence[str], min_freq: int = 1) -> "CharTokenizer":
-        from collections import Counter
+        """统计报告的所有字符出现频率，每个汉字/符号=一个字符"""
         cnt = Counter("".join(texts))
         chars = sorted(c for c, n in cnt.items() if n >= min_freq and c.strip())
         return cls({c: i + 3 for i, c in enumerate(chars)})
 
     def save(self, path: str) -> None:
+        """统计的字符保存为vocab.json"""
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(self.vocab, f, ensure_ascii=False, indent=1)
@@ -121,10 +122,12 @@ class CharTokenizer:
         return len(self.vocab) + 3
 
     def encode(self, text: str, max_len: int) -> np.ndarray:
+        """加入起止字符BOS/EOC"""
         ids = [self.BOS] + [self.vocab.get(c, self.PAD) for c in text] + [self.EOS]
         return np.asarray(ids[:max_len], dtype=np.int64)
 
     def decode(self, ids: Sequence[int]) -> str:
+        """去掉起止字符BOS/EOC"""
         return "".join(self.inv.get(int(t), "") for t in ids
                        if int(t) not in (self.PAD, self.BOS, self.EOS))
 

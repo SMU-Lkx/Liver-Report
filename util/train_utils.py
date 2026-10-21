@@ -1,6 +1,6 @@
 # util/train_utils.py
 """
-训练实用工具：配置保存、配置加载、断点保存、断点恢复、损失函数、损失写入csv管理类
+训练实用工具：配置保存、配置加载、断点保存、断点恢复、损失函数、损失写入csv管理类、文本生成可视化
 """
 import os, csv, yaml, shutil, datetime, logging, re
 from os.path import join
@@ -11,6 +11,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import torch
 import torch_npu
+import difflib
 
 
 FIRST_PRINT = True # 只打印一次的flag
@@ -389,3 +390,67 @@ def resume_from_ckpt(ckpt, model, optimizer=None, scheduler=None):
 
 def amp_context(enabled: bool):
     return torch_npu.npu.amp.autocast(enabled=enabled, dtype=torch.bfloat16)
+
+# ---- 文本生成可视化 ----
+def _repetition_ratio(text: str, n: int = 8) -> float:
+    """复读检测: 最长重复子串占全文比例 (greedy 死循环报警器)"""
+    if len(text) < 2 * n:
+        return 0.0
+    seen, best = {}, 0
+    for i in range(len(text) - n + 1):
+        g = text[i:i + n]
+        if g in seen:
+            best = max(best, i + n - seen[g])
+        else:
+            seen[g] = i
+    return best / len(text)
+
+
+def text_sampling(records, save_path, epoch, prefix="val"):
+    """
+    保存生成样本到 {save_path}/out_sample/
+      records: [{"pid": str, "gen": str, "ref": str}, ...]
+    产出:
+      {prefix}_ep{epoch:04d}.txt   纯文本 GEN/REF 对照
+      {prefix}_ep{epoch:04d}.html  字符级 diff 高亮 (灰=一致, 红删=REF有GEN无, 绿增=GEN多写, 黄=改写)
+    返回: 统计量 dict (写进 CSV)
+    """
+    out_dir = join(save_path, "out_sample")
+    os.makedirs(out_dir, exist_ok=True)
+
+    stats = {
+        "n": len(records),
+        "avg_gen_len": round(float(np.mean([len(r["gen"]) for r in records])), 1) if records else 0.0,
+        "avg_ref_len": round(float(np.mean([len(r["ref"]) for r in records])), 1) if records else 0.0,
+        "rep_ratio": round(float(np.mean([_repetition_ratio(r["gen"]) for r in records])), 3) if records else 0.0,
+    }
+
+    # ---- txt ----
+    txt_path = join(out_dir, f"{prefix}_ep{epoch:04d}.txt")
+    with open(txt_path, "w", encoding="utf-8") as f:
+        for r in records:
+            f.write(f"===== pid={r['pid']} | gen_len={len(r['gen'])} ref_len={len(r['ref'])} =====\n")
+            f.write(f"[GEN]\n{r['gen']}\n\n[REF]\n{r['ref']}\n\n\n")
+
+    # ---- html diff ----
+    sm = difflib.SequenceMatcher(autojunk=False)
+    rows = []
+    for r in records:
+        sm.set_seqs(r["ref"], r["gen"])
+        frag = []
+        for op, i1, i2, j1, j2 in sm.get_opcodes():
+            if op == "equal":
+                frag.append(f'<span style="color:#adb5bd">{r["ref"][i1:i2]}</span>')
+            elif op == "delete":
+                frag.append(f'<span style="background:#ffd7d5">{r["ref"][i1:i2]}</span>')
+            elif op == "insert":
+                frag.append(f'<span style="background:#d3f9d8">{r["gen"][j1:j2]}</span>')
+            else:
+                frag.append(f'<span style="background:#ffe066">{r["ref"][i1:i2]}&#8594;{r["gen"][j1:j2]}</span>')
+        rows.append(f"<h3>pid={r['pid']} (gen {len(r['gen'])} / ref {len(r['ref'])})</h3>"
+                    f"<p style='line-height:1.9;font-size:15px'>{''.join(frag)}</p>")
+    html_path = join(out_dir, f"{prefix}_ep{epoch:04d}.html")
+    with open(html_path, "w", encoding="utf-8") as f:
+        f.write("<meta charset='utf-8'><style>body{font-family:sans-serif;max-width:1100px;margin:auto}</style>"
+                + "".join(rows))
+    return stats
