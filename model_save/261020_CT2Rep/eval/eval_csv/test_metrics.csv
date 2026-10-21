@@ -1,0 +1,2 @@
+﻿cfg,ckpt,epoch,n_test,test_nll,char_bleu2,char_bleu4,char_rouge_l,avg_gen_len,avg_ref_len,rep_ratio,total_time_s,time_s_per_case
+/home/longkaixing/Liver/config/CT2Rep/261020_CT2Rep.yaml,/home/longkaixing/Liver/model_save/261020_CT2Rep/ckpt/best_model.pt,7,205,0.515,0.6217,0.5637,0.6718,115.4,139.8,0.0,7210.7,35.2
