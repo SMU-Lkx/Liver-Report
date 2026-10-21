@@ -78,8 +78,8 @@ def main():
     print(f"[Ckpt] {cli.ckpt} | epoch={epoch} val_nll={ckpt.get('val_nll')}")
 
     save_path = str(Path(cli.ckpt).resolve().parents[1])   # model_save/{save_name}/
-    csv_dir = join(save_path, "结果csv")
-    os.makedirs(csv_dir, exist_ok=True)
+    eval_dir = join(save_path, "eval")
+    os.makedirs(eval_dir, exist_ok=True)
 
     # ---- 单趟循环: 每例 teacher-forced nll + greedy 生成 ----
     records, rows = [], []
@@ -107,7 +107,7 @@ def main():
     # ---- corpus 级指标 ----
     rc = [list(r["ref"]) for r in records]
     hc = [list(r["gen"]) for r in records]
-    st = text_sampling(records, save_path, epoch=epoch, prefix="test")
+    st = text_sampling(records, eval_dir, epoch=epoch, prefix="test")
     metrics = {
         "cfg": cli.cfg, "ckpt": cli.ckpt, "epoch": epoch,
         "n_test": len(records),
@@ -123,9 +123,9 @@ def main():
     }
 
     # ---- 输出: json + 汇总csv + 逐例csv ----
-    eval_outputs(metrics, rows, save_path, tag='test')
+    out_root = eval_outputs(metrics, rows, eval_dir, tag='test')
     print(json.dumps(metrics, ensure_ascii=False, indent=1))
-    print(f"-> {save_path}/test_metrics.json, 结果csv/test_metrics.csv, 结果csv/test_cases.csv")
+    print(f"-> {out_root}/test_metrics.json, eval_csv/, out_sample/")
 
 
 if __name__ == "__main__":

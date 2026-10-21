@@ -1,17 +1,21 @@
 # Liver-Report：肝病影像报告生成
 
-基于私有肝脏影像数据（CT / MRI），系统性复现并对比现有三维医学影像报告生成方法，为肝病报告生成模型建立基线。
+基于私有肝脏影像数据（CT），系统性复现并对比现有三维医学影像报告生成方法，为肝病报告生成模型建立基线。
 
 ## 目录结构
 
 ```
 Liver/
 ├── config/                    # 各模型配置文件
-│   └── {YYMMDD}_{模型名称}_{备注}.yaml
+│   └── {YYMMDD}_{模型名称}_{可选}.yaml
 ├── data/                      # 数据相关（私有数据，不进仓库）
 │   └── Dataset/               # 数据集加载函数，命名 XXX_dataset.py
-├── model_save/                # 模型权重与训练结果（不进仓库）
-│   └── {YYMMDD}_{模型名称}_{备注}/
+├── eval/                      # 评估脚本，命名 eval_{模型名称}.py
+├── model_save/                # 模型权重（不进仓库）
+│   └── {YYMMDD}_{模型名称}_{可选}/ 
+│      ├── eval/               # 评估结果（val_utils.py/eval_outputs）
+│      │   └── out_sample/     # 评估过程生成的报告文本（train_utils.py/text_sampling）
+│      └── train_csv/          # 训练过程的损失、指标记录（EpochCSVLogger）
 ├── Models/                    # 待对比 / 复现的方法
 │   ├── Astra/
 │   ├── CT2Rep/
@@ -22,8 +26,8 @@ Liver/
 ├── train/                     # 训练脚本，命名 train_{模型名称}.py
 ├── util/                      # 工具函数
 │   ├── text_utils.py          # 字符评估工具：ngram 计数、字符级 BLEU 等
-│   └── train_utils.py         # 配置加载/保存、CSV 训练记录器、随机种子、
-│                              # 日志记录、断点保存恢复、精度分配等
+│   ├── train_utils.py         # 配置加载/保存、CSV 训练记录器、随机种子、日志记录、断点保存恢复等
+│   └── val_utils.py           # 评估结果保存工具
 ├── README.md
 └── 肝病报告生成-对比实验.xlsx    # 对比实验结果记录表
 ```
@@ -58,7 +62,7 @@ Liver/
 
 ## 使用约定
 
-- **配置文件**：`config/{YYMMDD}_{模型名称}_{备注}.yaml`，如 `260915_Merlin_IntraPhase.yaml`
+- **配置文件**：`config/{YYMMDD}_{模型名称}_{可选}.yaml`，如 `260915_Merlin_IntraPhase.yaml`
 - **模型输出**：`model_save/{YYMMDD}_{模型名称}_{备注}/`，权重与日志统一放此处
 - **数据路径**：通过配置文件指定
 - **评估指标**：文本生成指标统一调用 `util/text_utils.py`；训练入口统一使用 `util/train_utils.py` 中的记录器与断点管理

@@ -2,7 +2,7 @@
 """
 训练实用工具：配置保存、配置加载、断点保存、断点恢复、损失函数、损失写入csv管理类、文本生成可视化
 """
-import os, csv, yaml, shutil, datetime, logging, re
+import os, csv, yaml, shutil, datetime, logging, re, json
 from os.path import join
 from collections import OrderedDict
 from easydict import EasyDict
@@ -53,7 +53,7 @@ class EpochCSVLogger:
     极简Epoch级CSV记录器，支持断点恢复覆盖
     """
     def __init__(self, save_path, filename, resume=False):
-        save_dir = join(save_path, '结果csv')
+        save_dir = join(save_path, 'train_csv')
         os.makedirs(save_dir, exist_ok=True)
         self.filepath = join(save_dir, filename)
         self.resume = resume and os.path.exists(self.filepath)
@@ -408,15 +408,18 @@ def _repetition_ratio(text: str, n: int = 8) -> float:
 
 def text_sampling(records, save_path, epoch, prefix="val"):
     """
-    保存生成样本到 {save_path}/out_sample/
-      records: [{"pid": str, "gen": str, "ref": str}, ...]
-    产出:
-      {prefix}_ep{epoch:04d}.txt   纯文本 GEN/REF 对照
-      {prefix}_ep{epoch:04d}.html  字符级 diff 高亮 (灰=一致, 红删=REF有GEN无, 绿增=GEN多写, 黄=改写)
-    返回: 统计量 dict (写进 CSV)
+    生成样本归档 (训练期 val / 评估期 test 共用):
+      每例目录: {save_path}/out_sample/{pid}/gen.txt + diff.html + meta.json
+                (医生原文不回存, 经 pid 回查 data.xlsx; 同 pid 新 epoch 覆盖)
+      全量索引: {save_path}/out_sample/{prefix}_ep{epoch:04d}_all.txt
+                (GEN/REF 成对, 供人快速翻阅 diff)
+    Args:
+        records: [{"pid": str, "gen": str, "ref": str}, ...]
+    Returns:
+        stats: {"n", "avg_gen_len", "avg_ref_len", "rep_ratio"}
     """
-    out_dir = join(save_path, "out_sample")
-    os.makedirs(out_dir, exist_ok=True)
+    out_root = join(save_path, "out_sample")
+    os.makedirs(out_root, exist_ok=True)
 
     stats = {
         "n": len(records),
@@ -425,17 +428,15 @@ def text_sampling(records, save_path, epoch, prefix="val"):
         "rep_ratio": round(float(np.mean([_repetition_ratio(r["gen"]) for r in records])), 3) if records else 0.0,
     }
 
-    # ---- txt ----
-    txt_path = join(out_dir, f"{prefix}_ep{epoch:04d}.txt")
-    with open(txt_path, "w", encoding="utf-8") as f:
-        for r in records:
-            f.write(f"===== pid={r['pid']} | gen_len={len(r['gen'])} ref_len={len(r['ref'])} =====\n")
-            f.write(f"[GEN]\n{r['gen']}\n\n[REF]\n{r['ref']}\n\n\n")
-
-    # ---- html diff ----
     sm = difflib.SequenceMatcher(autojunk=False)
-    rows = []
     for r in records:
+        d = join(out_root, str(r["pid"]))
+        os.makedirs(d, exist_ok=True)
+
+        with open(join(d, "gen.txt"), "w", encoding="utf-8") as f:
+            f.write(r["gen"])
+
+        # 字符级 diff (灰=一致, 红=REF有GEN无, 绿=GEN多写, 黄=改写)
         sm.set_seqs(r["ref"], r["gen"])
         frag = []
         for op, i1, i2, j1, j2 in sm.get_opcodes():
@@ -447,10 +448,24 @@ def text_sampling(records, save_path, epoch, prefix="val"):
                 frag.append(f'<span style="background:#d3f9d8">{r["gen"][j1:j2]}</span>')
             else:
                 frag.append(f'<span style="background:#ffe066">{r["ref"][i1:i2]}&#8594;{r["gen"][j1:j2]}</span>')
-        rows.append(f"<h3>pid={r['pid']} (gen {len(r['gen'])} / ref {len(r['ref'])})</h3>"
-                    f"<p style='line-height:1.9;font-size:15px'>{''.join(frag)}</p>")
-    html_path = join(out_dir, f"{prefix}_ep{epoch:04d}.html")
-    with open(html_path, "w", encoding="utf-8") as f:
-        f.write("<meta charset='utf-8'><style>body{font-family:sans-serif;max-width:1100px;margin:auto}</style>"
-                + "".join(rows))
+        with open(join(d, "diff.html"), "w", encoding="utf-8") as f:
+            f.write("<meta charset='utf-8'><style>"
+                    "body{font-family:sans-serif;max-width:1100px;margin:auto}"
+                    "p{line-height:1.9;font-size:15px}</style>"
+                    f"<h3>pid={r['pid']} | gen {len(r['gen'])} / ref {len(r['ref'])} chars"
+                    f" | ep{epoch:04d}</h3><p>{''.join(frag)}</p>")
+
+        with open(join(d, "meta.json"), "w", encoding="utf-8") as f:
+            json.dump({"pid": r["pid"], "epoch": int(epoch), "prefix": prefix,
+                        "gen_len": len(r["gen"]), "ref_len": len(r["ref"]),
+                        "rep_ratio": round(_repetition_ratio(r["gen"]), 3)},
+                       f, ensure_ascii=False, indent=1)
+
+    # 全量索引 (GEN/REF 成对, 自包含阅读)
+    if records:
+        with open(join(out_root, f"{prefix}_ep{epoch:04d}_all.txt"), "w", encoding="utf-8") as f:
+            for r in records:
+                f.write(f"===== pid={r['pid']} | gen_len={len(r['gen'])} ref_len={len(r['ref'])} =====\n")
+                f.write(f"[GEN]\n{r['gen']}\n\n[REF]\n{r['ref']}\n\n\n")
+
     return stats
