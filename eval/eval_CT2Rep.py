@@ -33,7 +33,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from data.Dataset.Multiphase_dataset import CharTokenizer, MultiphaseReport, multiphase_collate
 from Models.CT2Rep.model.CT2Rep import CT2Rep, CharTokenizerAdapter
 from util.train_utils import load_config, setup_seed, amp_context, text_sampling
-from util.text_utils import char_bleu, char_rouge_l
+from util.text_utils import sacre_bleu_zh, char_rouge_l
 from util.val_utils import eval_outputs
 
 PAD = 0
@@ -46,6 +46,8 @@ def main():
         default="/home/longkaixing/Liver/config/CT2Rep/261020_CT2Rep.yaml")
     parser.add_argument("--ckpt", type=str,
         default="/home/longkaixing/Liver/model_save/261020_CT2Rep/ckpt/best_model.pt")
+    parser.add_argument("--device", type=str,
+        default='npu:0')
     cli, _ = parser.parse_known_args()
 
     config = load_config(cli.cfg)
@@ -80,8 +82,11 @@ def main():
     save_path = str(Path(cli.ckpt).resolve().parents[1])   # model_save/{save_name}/
     eval_dir = join(save_path, "eval")
     os.makedirs(eval_dir, exist_ok=True)
+    # ---- 评估循环 ----
+    out_root = join(eval_dir, "out_sample")
+    os.makedirs(out_root, exist_ok=True)
+    all_txt = join(out_root, f"test_ep{epoch:04d}_all.txt")
 
-    # ---- 单趟循环: 每例 teacher-forced nll + greedy 生成 ----
     records, rows = [], []
     t0 = time.time()
     pbar = tqdm(loader, desc="Test")
@@ -95,9 +100,22 @@ def main():
                                    y[:, 1:].reshape(-1), ignore_index=PAD,
                                    reduction="sum").item())
             n_valid = int((y[:, 1:] != PAD).sum().item())
-            seq = model.generate(x)
-        gen = tok_adapt.decode(seq[0].cpu().tolist())
+            gen_path = join(out_root, str(pid), "gen.txt")
+            if os.path.exists(gen_path):                 # ← 断点续跑: 已生成则跳过采样
+                with open(gen_path, encoding="utf-8") as f:
+                    gen = f.read()
+            else:
+                seq = model.generate(x)
+                gen = tok_adapt.decode(seq[0].cpu().tolist())
         ref = tok_adapt.decode(y[0].cpu().tolist())
+
+        # 逐例保存: gen.txt/diff.html/meta.json
+        text_sampling([{"pid": pid, "gen": gen, "ref": ref}], eval_dir, epoch=epoch, prefix="test")
+        # all.txt (GEN/REF 成对便于比较)
+        with open(all_txt, "a", encoding="utf-8") as f:
+            f.write(f"===== pid={pid} | gen_len={len(gen)} ref_len={len(ref)} =====\n")
+            f.write(f"[GEN]\n{gen}\n\n[REF]\n{ref}\n\n\n")
+
         records.append({"pid": pid, "gen": gen, "ref": ref})
         rows.append({"pid": pid, "nll": round(nll / max(n_valid, 1), 4),
                      "gen_len": len(gen), "ref_len": len(ref)})
@@ -107,14 +125,15 @@ def main():
     # ---- corpus 级指标 ----
     rc = [list(r["ref"]) for r in records]
     hc = [list(r["gen"]) for r in records]
+    refs_l = [r["ref"] for r in records]
+    hyps_l = [r["gen"] for r in records]
     st = text_sampling(records, eval_dir, epoch=epoch, prefix="test")
     metrics = {
         "cfg": cli.cfg, "ckpt": cli.ckpt, "epoch": epoch,
         "n_test": len(records),
-        "test_nll": round(sum(r["nll"] * r["ref_len"] for r in rows) /
-                          max(sum(r["ref_len"] for r in rows), 1), 4),
-        "char_bleu2": round(char_bleu(rc, hc, max_n=2), 4),
-        "char_bleu4": round(char_bleu(rc, hc, max_n=4), 4),
+        "test_nll": round(sum(r["nll"] * r["ref_len"] for r in rows) / max(sum(r["ref_len"] for r in rows), 1), 4),
+        "char_bleu2": round(sacre_bleu_zh(refs_l, hyps_l, max_n=2), 4),
+        "char_bleu4": round(sacre_bleu_zh(refs_l, hyps_l, max_n=4), 4),
         "char_rouge_l": round(char_rouge_l(rc, hc), 4),
         "avg_gen_len": st["avg_gen_len"], "avg_ref_len": st["avg_ref_len"],
         "rep_ratio": st["rep_ratio"],

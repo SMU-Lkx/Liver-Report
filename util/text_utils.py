@@ -4,14 +4,14 @@
 """
 from collections import Counter
 import math
+from sacrebleu.metrics import BLEU as SacreBLEU
 
 # ---------- char-level BLEU(corpus 级) ----------
 def ngram_counts(chars, n):
     return Counter(tuple(chars[i:i + n]) for i in range(len(chars) - n + 1))
 
-
 def char_bleu(refs_chars, hyps_chars, max_n=2):
-    """简化版 corpus BLEU(几何平均 + brevity penalty), 字符级。"""
+    """简化版 corpus BLEU(几何平均 + brevity penalty), 字符级。(备选项，未启用)"""
     p_ns = []
     for n in range(1, max_n + 1):
         match = total = 0
@@ -26,6 +26,15 @@ def char_bleu(refs_chars, hyps_chars, max_n=2):
     if c < r:
         bp = math.exp(1 - r / max(c, 1))
     return bp * math.exp(sum(math.log(p) for p in p_ns) / max_n)
+
+def sacre_bleu_zh(refs, hyps, max_n=4):
+    """
+    权威中文 BLEU (sacrebleu, 按字切分, corpus 级).
+      refs/hyps: list[str]
+      max_n=2 -> BLEU2, max_n=4 -> BLEU4
+    """
+    bleu = SacreBLEU(max_ngram_order=max_n, tokenize="zh")
+    return bleu.corpus_score(hyps, [refs]).score / 100.0
 
 # ---------- char-level ROUGE-L ----------
 def _lcs_len(a, b):
@@ -46,3 +55,6 @@ def char_rouge_l(refs_chars, hyps_chars):
     R = tp / max(sum(len(r) for r in refs_chars), 1)
     P = tp / max(sum(len(h) for h in hyps_chars), 1)
     return 2 * R * P / (R + P) if (R + P) > 0 else 0.0
+
+
+

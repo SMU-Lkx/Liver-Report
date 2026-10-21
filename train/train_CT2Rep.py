@@ -44,7 +44,7 @@ from data.Dataset.Multiphase_dataset import CharTokenizer, MultiphaseReport, mul
 from Models.CT2Rep.model.CT2Rep import CT2Rep, CharTokenizerAdapter
 from util.train_utils import (CkptManager, EpochCSVLogger, load_config, log_setup, resume_from_ckpt,
                               save_config, setup_seed, amp_context, text_sampling)
-from util.text_utils import char_bleu
+from util.text_utils import sacre_bleu_zh, char_rouge_l
 
 PAD, BOS, EOS = 0, 1, 2
 
@@ -103,8 +103,11 @@ def validate(model, loader, device, args, tok_adapt, epoch=None, save_path=None)
 
     metrics = {"nll": nll / max(n, 1), "bleu2": 0.0, "evaluated": n}
     if records:
-        metrics["bleu2"] = char_bleu([list(r["ref"]) for r in records],
-                                     [list(r["gen"]) for r in records])
+        refs_c = [list(r["ref"]) for r in records]
+        hyps_c = [list(r["gen"]) for r in records]
+        metrics["bleu2"] = sacre_bleu_zh([r["ref"] for r in records],
+                                         [r["gen"] for r in records], max_n=2)
+        metrics["rouge_l"] = char_rouge_l(refs_c, hyps_c)
         if save_path and epoch is not None:
             st = text_sampling(records, save_path, epoch)      # → out_sample/val_epXXXX.txt/.html
             metrics["gen_len"] = st["avg_gen_len"]
@@ -172,14 +175,15 @@ def main():
     start_time = time.time()
     for epoch in range(start_epoch, int(args.epoch) + 1):
         tr_nll = train_one_epoch(model, train_loader, optimizer, device, args, epoch)
-        va = validate(model, val_loader, device, args, tok_adapt)
+        va = validate(model, val_loader, device, args, tok_adapt, epoch=epoch, save_path=save_path)
         scheduler.step()
         lr_now = optimizer.param_groups[0]["lr"]
         elapsed = str(datetime.timedelta(seconds=int(time.time() - start_time)))
         logging.info(f"[Ep {epoch:02d}] train_nll={tr_nll:.4f} | val_nll={va['nll']:.4f} "
-                     f"bleu2={va['bleu2']:.4f} | lr={lr_now:.2e} | {elapsed}")
+                     f"bleu2={va['bleu2']:.4f} rouge_l={va.get('rouge_l', 0):.4f} | lr={lr_now:.2e} | {elapsed}")
         csv_logger.add_epoch(epoch, train_nll=tr_nll, val_nll=va["nll"],
-                             val_bleu2=va["bleu2"], lr=lr_now)
+                             val_bleu2=va["bleu2"], val_rouge_l=va.get("rouge_l", ""),
+                             lr=lr_now)
 
         ckpt_mgr.save_epoch(epoch, model, optimizer=optimizer, scheduler=scheduler,
                             best_val=best_val, extra={"no_improve": no_improve})
