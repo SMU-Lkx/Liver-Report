@@ -142,7 +142,7 @@ class ConditionalSublayerConnection(nn.Module):
     def forward(self, x, sublayer, memory):
         return x + self.dropout(sublayer(self.norm(x, memory)))
 
-
+# ---- MCLN ----
 class ConditionalLayerNorm(nn.Module):
     def __init__(self, d_model, rm_num_slots, rm_d_model, eps=1e-6):
         super(ConditionalLayerNorm, self).__init__()

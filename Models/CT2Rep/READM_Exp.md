@@ -73,3 +73,8 @@ eval/
 | 权重 | `model_save/261020_CT2Rep/ckpt/{best_model.pt(epoch7), last_model.pt, epoch*.pt}` |
 | 评估产物 | `model_save/261020_CT2Rep/eval/`（见上节） |
 | 配置存档 | `model_save/261020_CT2Rep/261020_CT2Rep_*.yaml` |
+
+
+
+## todo
+可进一步探究是文本端还是影像端导致的输出高度一致的问题。
