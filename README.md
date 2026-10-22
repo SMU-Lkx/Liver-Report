@@ -45,7 +45,6 @@ Liver/
 | **MRI2Rep** | [MRI2Rep: Autoregressive Structured Report Generation for 3D Liver MRI](https://arxiv.org/abs/2606.25279) (MICCAI 2026) | [Alena-Xinran/MRI2Rep](https://github.com/Alena-Xinran/MRI2Rep) | 正在复现 |
 | **Astra** | [Astra: a generalizable report generation foundation model for 3D computed tomography](https://arxiv.org/abs/2605.31437) | [zh-Wang-Med/Astra](https://github.com/zh-Wang-Med/Astra) | 待复现 |
 
-> 标注 *zero-shot* 的方法直接在私有数据上推理评估，不微调；其余方法需迁移/复现训练流程。
 
 ## 复现安排
 
