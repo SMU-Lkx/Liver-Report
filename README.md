@@ -9,7 +9,9 @@ Liver/
 ├── config/                    # 各模型配置文件
 │   └── {YYMMDD}_{模型名称}_{可选}.yaml
 ├── data/                      # 数据相关（私有数据，不进仓库）
-│   └── Dataset/               # 数据集加载函数，命名 XXX_dataset.py
+│   ├── Dataset/               # 数据集加载函数，命名 XXX_dataset.py
+│   ├── split_idx/260925_SSL   # 数据集划分索引
+│   └── data.xlsx              # 影像数据索引+报告文本
 ├── eval/                      # 评估脚本，命名 eval_{模型名称}.py
 ├── model_save/                # 模型权重（不进仓库）
 │   └── {YYMMDD}_{模型名称}_{可选}/ 
