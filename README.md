@@ -35,6 +35,7 @@ Liver/
 ```
 
 > **注意**：`data/`、`model_save/` 及各模型权重均通过 `.gitignore` 排除，仓库只同步代码与配置。
+push前
 
 ## 对比方法
 
