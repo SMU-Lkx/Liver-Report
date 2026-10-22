@@ -28,6 +28,9 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.font_manager import FontProperties
+FP = FontProperties(fname="/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc")
+
 
 # ---------------- 签名归一化 (数值槽 mask, 精确级/签名级共用) ----------------
 RE_CTVAL = re.compile(r"CT值约?\s*\d+(?:\.\d+)?(?:\s*[-~—]\s*\d+(?:\.\d+)?)?\s*(?:Hu|HU|hu)")
@@ -113,19 +116,23 @@ def hist_metrics(df: pd.DataFrame, n_total: int, level: str) -> dict:
 def plot_hist(gen_df: pd.DataFrame, ref_df: pd.DataFrame, out_png: str, topk: int):
     def _panel(ax, df, title):
         k = min(topk, len(df))
-        top = df.iloc[:k].iloc[::-1]                       # 条形图自下而上频次递增
-        labels = [str(x)[:32] + ("…" if len(str(x)) > 32 else "") for x in top[f"{df.columns[0]}"]]
-        ax.barh(labels, top["count"], color="#4878cf")
+        top = df.iloc[:k].iloc[::-1]  # 条形图自下而上频次递增
+        labels = [str(x)[:32] + ("…" if len(str(x)) > 32 else "") for x in top[df.columns[0]]]
+        ypos = range(len(top))
+        ax.barh(ypos, top["count"], color="#4878cf")
+        ax.set_yticks(list(ypos))
+        ax.set_yticklabels(labels, fontproperties=FP, fontsize=7)  # ← 逐元素指定字体
         for i, (c, p) in enumerate(zip(top["count"], top["pct"])):
-            ax.text(c + max(top["count"]) * 0.01, i, f"{c} ({p:.0%})", va="center", fontsize=8)
+            ax.text(c + max(top["count"]) * 0.01, i, f"{c} ({p:.0%})",
+                    va="center", fontsize=8)
         ax.set_title(f"{title} (top {k}, n={int(df['count'].sum())})", fontsize=11)
         ax.tick_params(axis="y", labelsize=7)
     fig, axes = plt.subplots(1, 2, figsize=(16, max(6, topk * 0.32)))
-    _panel(axes[0], gen_df, "GEN 签名直方图")
-    _panel(axes[1], ref_df, "REF 签名直方图")
+    _panel(axes[0], gen_df, "GEN")
+    _panel(axes[1], ref_df, "REF")
     plt.tight_layout()
-    plt.show()
     plt.savefig(out_png, dpi=200, bbox_inches="tight")
+    plt.show()
     plt.close()
 
 
