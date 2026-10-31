@@ -1,0 +1,68 @@
+# config/MRI2Rep/261029_MRI2Rep_4p.yaml
+# - train/train_MRI2Rep.py
+
+
+save_name: 261029_MRI2Rep_4p
+save_dir: /home/longkaixing/Liver/model_save
+
+# ---- 数据 ----
+data: /home/longkaixing/Liver/data/data.xlsx
+sampler: /home/longkaixing/Liver/data/split_idx/260925_SSL
+RLC_csv: /home/longkaixing/Liver/Models/MRI2Rep/RLC_report/logs/accurate_summary.csv
+# 只读复用 CT2Rep 的 x.npy/mask.npy；不得与 RLC_cache_dir 相同。
+cache_dir: /data/longkaixing/Liver/Multiphase
+# 独立保存 RLC y.npy/meta.json，不覆盖 CT2Rep 的中文字符 y.npy。
+RLC_cache_dir: /data/longkaixing/Liver/Multiphase_RLC_labels_4phase
+RLC_phase: [NC, Arterial, Venous, Delay]
+RLC_shape: [224, 224, 160]  # 与 CT2Rep 影像缓存网格一致
+mask_mode: venous
+max_len: 27
+verify_paths: false
+use_lesion_sampler: True  # 是否使用对病灶的分层采样（解决类别不平衡问题）
+rare_sampling_ratio: 0.4  # 稀有病例采样比例
+no_lesion_ratio: 0.2  # 无病灶采样比例
+
+# ---- 模型 ----
+in_ch: 5                   # 由 RLC_phase 自动推导：4 个期相 + 1 个 mask
+base_channels: 32
+d_model: 256
+nhead: 8
+enc_layers: 2            # visual transformer
+dec_layers: 4            # 文本解码器
+dim_ff: 512
+dropout: 0.2
+vis_grid: [7, 7, 5]      # 28x28x20 特征 -> 245 个 visual token
+pretrained_backbone: /home/longkaixing/Liver/model_save/261016_pretrain_NCAD2V/backbone_NCAD2V_best.pt
+
+# ---- 损失/正则(MRI2Rep 同构) ----
+label_smoothing: 0.1
+word_dropout_p: 0.15
+ss_max_prob: 0.3         # scheduled sampling 上限
+ss_start_epoch: 10
+ss_warmup_epochs: 20
+aux_weight: 0.0          # >0 时需配 label_csv(路由标签), 暂留接口
+label_csv: ""
+lr_aux: 0.001  # 20 * lr_decoder
+
+# ---- 训练 ----
+batch_size: 4
+num_workers: 4
+epoch: 50
+lr_backbone: 0.000005    # 预训练 backbone 慢速
+lr_decoder: 0.00005
+min_lr: 0.0000001
+weight_decay: 0.0001
+max_grad_norm: 1.0
+early_stop: 10
+seed: 42
+use_bf16: true
+val_max_batches: 0      # 验证集评估上限(每epoch)，0=无上限
+val_generate_batches: 8 # 生成/BLEU 评估的 batch 数
+max_keep_epochs: 0
+device: "npu:2"
+resume: true
+# 最佳模型保存门槛
+min_epoch_best: 15  # 最佳模型的最小轮次（之后以第15轮后的模型作为最佳模型）
+min_lesion1p_f1_for_best: 0.02  # 候选最佳模型需pair-F1 ≥ 0.02
+use_class_weights: True  # 是否启用类别加权
+class_weight_beta: 0.999

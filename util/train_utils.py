@@ -367,6 +367,13 @@ class CkptManager:
             return None
         return torch.load(self.last_path, map_location=map_location)
 
+    def load(self, path=None, map_location=None):
+        """加载任意 ckpt 文件（默认 best_model.pt）；返回完整 payload。"""
+        path = path or join(self.ckpt_dir, "best_model.pt")
+        if not os.path.exists(path):
+            raise FileNotFoundError(path)
+        return torch.load(path, map_location=map_location)
+
     def _gc_epochs(self):
         if self.max_keep_epochs <= 0:
             return

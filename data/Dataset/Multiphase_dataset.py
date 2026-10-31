@@ -18,6 +18,10 @@ Cache: per-patient folder {cache_dir}/{pid}/{x.npy, mask.npy, y.npy, meta.json}
   - manifest.json at cache root: [{id, cache_dir, split, text, impression}]
 
 Pretrain mode: MultiphasePretrain returns (x_in, target_V, mask), x_in 的 V 通道已置零。
+
+RLC mode: MultiphaseRLC 使用独立缓存，读取 accurate_summary.csv，
+  返回 x=[Arterial,Venous,Venous_mask]（3通道）和官方24-token序列；
+  默认网格为192×192×96，不读取或覆盖自由文本 y.npy。
 """
 from __future__ import annotations
 
@@ -43,6 +47,25 @@ MASK_COLS = {"NC": "NC_mask", "Arterial": "Arterial_mask",
 HU_MIN, HU_MAX = -1000.0, 1000.0
 SHAPE = (224, 224, 160)
 DEFAULT_CACHE = "/data/longkaixing/Liver/Multiphase"
+
+# 官方 MRI2Rep-RLC：仅使用 ART、PV 和肝脏 mask，不使用 NC/Delay。
+RLC_PHASE_ORDER = ["Arterial", "Venous"]
+RLC_SHAPE = (192, 192, 96)
+RLC_MAX_LESIONS = 8
+RLC_MAX_LEN = 2 + 1 + 3 * RLC_MAX_LESIONS  # BOS/EOS + liver + 8 个三元组
+DEFAULT_RLC_CACHE = "/data/longkaixing/Liver/Multiphase_RLC"
+
+
+def normalize_rlc_phases(phases: Sequence[str]) -> tuple:
+    """校验 YAML 中的 RLC_phase；返回与模型通道一致的期相顺序。"""
+    if isinstance(phases, str):
+        phases = phases.replace("，", ",").split(",")
+    phases = tuple(str(phase).strip() for phase in phases)
+    if not phases or any(phase not in IMG_COLS for phase in phases):
+        raise ValueError(f"RLC_phase 必须从 {PHASE_ORDER} 中选择，收到 {phases}")
+    if len(set(phases)) != len(phases):
+        raise ValueError(f"RLC_phase 不得包含重复期相：{phases}")
+    return phases
 
 
 # 检查缓存文件齐全
@@ -271,8 +294,295 @@ def multiphase_collate(batch: List[dict]) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# MRI2Rep-RLC dataset: [Arterial, Venous, Venous mask] -> closed-set sequence
+# ---------------------------------------------------------------------------
+class RLCTokenizer:
+    """官方24-token词表；NO_LESION可解码，但不允许写入GT序列。"""
+    PAD, BOS, EOS = 0, 1, 2
+    VOCAB = [
+        "PAD", "BOS", "EOS", "NO_LESION",
+        "Fibrosis/Cirrhosis", "NoFibrosis/Cirrhosis",
+        "APHE_WO", "RIM_ATYP", "APHE_NoWO", "HEM", "CYST",
+        "L_LAT", "L_MED", "R_ANT", "R_POST", "R_JUNCTION",
+        "CAUDATE", "L_DIFFUSE", "R_DIFFUSE", "DIFFUSE",
+        "1", "2", "GE3", "Multiple",
+    ]
+    LIVER_TOKENS = {"Fibrosis/Cirrhosis", "NoFibrosis/Cirrhosis"}
+
+    def __init__(self):
+        assert len(self.VOCAB) == 24
+        self.vocab = {token: idx for idx, token in enumerate(self.VOCAB)}
+        self.inv = {idx: token for token, idx in self.vocab.items()}
+
+    @property
+    def vocab_size(self) -> int:
+        return len(self.VOCAB)
+
+    def encode(self, sequence: str, max_len: int = RLC_MAX_LEN) -> np.ndarray:
+        parts = [part.strip() for part in str(sequence).split(",") if part.strip()]
+        if not parts or parts[0] not in self.LIVER_TOKENS:
+            raise ValueError(f"非法 RLC 肝脏背景：{sequence!r}")
+        if "NO_LESION" in parts:
+            raise ValueError("GT 不应包含 NO_LESION；无病灶应为 [BOS, liver, EOS]")
+        if (len(parts) - 1) % 3 != 0:
+            raise ValueError(f"RLC 病灶字段不是完整三元组：{sequence!r}")
+        n_lesions = (len(parts) - 1) // 3
+        if n_lesions > RLC_MAX_LESIONS:
+            raise ValueError(f"RLC 病灶数 {n_lesions} 超过官方上限 {RLC_MAX_LESIONS}")
+        unknown = [token for token in parts if token not in self.vocab]
+        if unknown:
+            raise ValueError(f"RLC 含词表外 token：{unknown}")
+        ids = [self.BOS] + [self.vocab[token] for token in parts] + [self.EOS]
+        if len(ids) > max_len:
+            raise ValueError(f"RLC 长度 {len(ids)} 超过 max_len={max_len}")
+        return np.asarray(ids, dtype=np.int64)
+
+    def decode(self, ids: Sequence[int]) -> str:
+        tokens = []
+        for value in ids:
+            idx = int(value)
+            if idx == self.EOS:
+                break
+            if idx not in (self.PAD, self.BOS):
+                tokens.append(self.inv.get(idx, "Unknown"))
+        return ", ".join(tokens)
+
+
+def _normalize_rlc_id(value) -> str:
+    text = "" if pd.isna(value) else str(value).strip()
+    if text.endswith(".0") and text[:-2].isdigit():
+        text = text[:-2]
+    return text
+
+
+def load_rlc_records(data_path: str, pid_csv: str, rlc_csv: str,
+                     tokenizer: RLCTokenizer, phases: Sequence[str] = tuple(RLC_PHASE_ORDER),
+                     verify_paths: bool = False) -> List[dict]:
+    """按 split 顺序联合所选期相的原始影像路径与 build 接受的 RLC 标签。"""
+    phases = normalize_rlc_phases(phases)
+    source = pd.read_excel(data_path)
+    labels = pd.read_csv(rlc_csv, dtype={"id": str})
+    required_source = {"id", "Venous_mask"} | {IMG_COLS[phase] for phase in phases}
+    required_labels = {"id", "sequence"}
+    if required_source - set(source.columns):
+        raise ValueError(f"data.xlsx 缺少列：{sorted(required_source - set(source.columns))}")
+    if required_labels - set(labels.columns):
+        raise ValueError(f"RLC 标签缺少列：{sorted(required_labels - set(labels.columns))}")
+
+    source["id"] = source["id"].map(_normalize_rlc_id)
+    labels["id"] = labels["id"].map(_normalize_rlc_id)
+    if labels["id"].duplicated().any():
+        raise ValueError(f"{rlc_csv} 存在重复 id，无法唯一对应标签")
+    source = source.drop_duplicates("id", keep="first").set_index("id", drop=False)
+    labels = labels.set_index("id", drop=False)
+
+    split_ids = pd.read_csv(pid_csv, dtype={"id": str})["id"].map(_normalize_rlc_id)
+    split_ids = list(dict.fromkeys(pid for pid in split_ids if pid))
+    records = []
+    skipped = Counter({
+        "missing_data": 0, "missing_rlc": 0, "missing_phase": 0, "invalid_rlc": 0,
+    })
+    for pid in split_ids:
+        if pid not in source.index:
+            skipped["missing_data"] += 1
+            continue
+        if pid not in labels.index:
+            skipped["missing_rlc"] += 1
+            continue
+        row = source.loc[pid]
+        label = labels.loc[pid]
+        sequence = "" if pd.isna(label["sequence"]) else str(label["sequence"]).strip()
+        try:
+            tokenizer.encode(sequence)
+        except ValueError:
+            skipped["invalid_rlc"] += 1
+            continue
+
+        imgs = {phase: row.get(IMG_COLS[phase]) for phase in phases}
+        mask = row.get(MASK_COLS["Venous"])
+        paths = list(imgs.values()) + [mask]
+        if any(pd.isna(path) or not str(path).strip() for path in paths):
+            skipped["missing_phase"] += 1
+            continue
+        if verify_paths and any(not Path(str(path)).exists() for path in paths):
+            skipped["missing_phase"] += 1
+            continue
+        records.append({
+            "pid": pid,
+            "imgs": {phase: str(imgs[phase]) for phase in phases},
+            "mask": str(mask),
+            "sequence": sequence,
+            "tier": int(label["tier"]) if "tier" in labels.columns and not pd.isna(label["tier"]) else -1,
+            "wc": int(label["wc"]) if "wc" in labels.columns and not pd.isna(label["wc"]) else -1,
+        })
+    print(f"[load_rlc_records] {Path(pid_csv).name}: {len(records)} patients | skipped: {dict(skipped)}")
+    return records
+
+# ---------------------------------------------------------------------------
 # pretrain dataset: reconstruct Venous from NC+A+D (V channel zeroed)
 # ---------------------------------------------------------------------------
+def _prep_rlc_volume(nii_path: str, target_aff: np.ndarray, shape) -> np.ndarray:
+    img = nib.as_closest_canonical(nib.load(nii_path))
+    out = resample_from_to(img, (shape, target_aff), order=1,
+                           mode="constant", cval=-1000.0)
+    x = np.clip(out.get_fdata().astype(np.float32), HU_MIN, HU_MAX)
+    return ((x - HU_MIN) / (HU_MAX - HU_MIN))[None]
+
+
+def _prep_rlc_mask(nii_path: str, target_aff: np.ndarray, shape) -> np.ndarray:
+    img = nib.as_closest_canonical(nib.load(nii_path))
+    out = resample_from_to(img, (shape, target_aff), order=0,
+                           mode="constant", cval=0.0)
+    return (out.get_fdata() > 0.5).astype(np.uint8)[None]
+
+
+def _rlc_cache_ready(cache_dir: str, pid: str, sequence: str, shape,
+                     phases: Sequence[str], image_cache_dir: str = "") -> bool:
+    d = _patient_dir(cache_dir, pid)
+    files = ("y.npy", "meta.json") if image_cache_dir else ("x.npy", "mask.npy", "y.npy", "meta.json")
+    if not all(os.path.exists(os.path.join(d, name)) for name in files):
+        return False
+    try:
+        with open(os.path.join(d, "meta.json"), encoding="utf-8") as f:
+            meta = json.load(f)
+        external = os.path.abspath(image_cache_dir) if image_cache_dir else ""
+        return (
+            meta.get("sequence") == sequence
+            and tuple(meta.get("shape", ())) == tuple(shape)
+            and tuple(meta.get("phases", ())) == tuple(phases)
+            and meta.get("image_cache_dir", "") == external
+        )
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return False
+
+
+def write_rlc_cache(rec: dict, tokenizer: RLCTokenizer, cache_dir: str,
+                    max_len: int = RLC_MAX_LEN, shape=RLC_SHAPE,
+                    phases: Sequence[str] = tuple(RLC_PHASE_ORDER),
+                    image_cache_dir: str = "") -> None:
+    """写 RLC 标签；外接 CT2Rep 缓存时只写 y/meta，绝不改写其影像或中文标签。"""
+    phases = normalize_rlc_phases(phases)
+    out = _patient_dir(cache_dir, rec["pid"])
+    os.makedirs(out, exist_ok=True)
+    y = tokenizer.encode(rec["sequence"], max_len=max_len)
+
+    if not image_cache_dir:
+        ref_img = nib.as_closest_canonical(nib.load(rec["imgs"]["Venous"]))
+        target_aff = _target_affine(ref_img, shape=shape)
+        vols = [_prep_rlc_volume(rec["imgs"][phase], target_aff, shape)[0]
+                for phase in phases]
+        mask = _prep_rlc_mask(rec["mask"], target_aff, shape)
+        x = np.stack(vols, axis=0)
+        np.save(os.path.join(out, "x.npy"), (x * 255).astype(np.uint8))
+        np.save(os.path.join(out, "mask.npy"), mask)
+
+    np.save(os.path.join(out, "y.npy"), y)
+    with open(os.path.join(out, "meta.json"), "w", encoding="utf-8") as f:
+        json.dump({
+            "sequence": rec["sequence"], "tier": rec["tier"], "wc": rec["wc"],
+            "shape": list(shape), "phases": list(phases), "mask": "Venous",
+            "image_cache_dir": os.path.abspath(image_cache_dir) if image_cache_dir else "",
+        }, f, ensure_ascii=False)
+
+
+class MultiphaseRLC(Dataset):
+    """返回 x=[RLC_phase..., Venous MASK] 和固定词表的 RLC token IDs。"""
+
+    def __init__(self, data_path: str, pid_csv: str, rlc_csv: str,
+                 tokenizer: RLCTokenizer = None, cache_dir: str = DEFAULT_RLC_CACHE,
+                 max_len: int = RLC_MAX_LEN, shape=RLC_SHAPE,
+                 phases: Sequence[str] = tuple(RLC_PHASE_ORDER),
+                 image_cache_dir: str = "", build_if_missing: bool = True,
+                 verify_paths: bool = False):
+        self.tok = tokenizer or RLCTokenizer()
+        self.cache_dir = cache_dir
+        self.image_cache_dir = image_cache_dir or ""
+        self.phases = normalize_rlc_phases(phases)
+        self.max_len = int(max_len)
+        self.shape = tuple(int(v) for v in shape)
+        if len(self.shape) != 3:
+            raise ValueError(f"shape 必须为三维，收到 {self.shape}")
+        if self.image_cache_dir:
+            if os.path.abspath(self.image_cache_dir) == os.path.abspath(self.cache_dir):
+                raise ValueError("CT2Rep 影像 cache_dir 与 RLC_cache_dir 必须不同")
+            if self.phases != tuple(PHASE_ORDER) or self.shape != SHAPE:
+                raise ValueError(
+                    f"复用 CT2Rep 缓存要求 RLC_phase={PHASE_ORDER}、RLC_shape={SHAPE}；"
+                    f"当前 phases={self.phases}、shape={self.shape}"
+                )
+        self.build = bool(build_if_missing)
+        self.records = load_rlc_records(
+            data_path, pid_csv, rlc_csv, self.tok, phases=self.phases,
+            verify_paths=verify_paths,
+        )
+
+    def __len__(self):
+        return len(self.records)
+
+    def __getitem__(self, idx: int) -> dict:
+        rec = self.records[idx]
+        if not _rlc_cache_ready(
+            self.cache_dir, rec["pid"], rec["sequence"], self.shape,
+            self.phases, self.image_cache_dir,
+        ):
+            if not self.build:
+                raise FileNotFoundError(
+                    f"RLC 缓存缺失或配置已更新：{_patient_dir(self.cache_dir, rec['pid'])}"
+                )
+            write_rlc_cache(
+                rec, self.tok, self.cache_dir, self.max_len, self.shape,
+                self.phases, self.image_cache_dir,
+            )
+
+        label_dir = _patient_dir(self.cache_dir, rec["pid"])
+        if self.image_cache_dir:
+            image_dir = _patient_dir(self.image_cache_dir, rec["pid"])
+            image_files = [os.path.join(image_dir, name) for name in ("x.npy", "mask.npy")]
+            if not all(os.path.exists(path) for path in image_files):
+                raise FileNotFoundError(
+                    f"CT2Rep 影像缓存缺失：{image_dir}；请先构建 CT2Rep 缓存。"
+                    "RLC 不会向该目录写入任何文件。"
+                )
+            x = np.load(image_files[0], mmap_mode="r")
+            mask = np.load(image_files[1], mmap_mode="r")
+            y = np.load(os.path.join(label_dir, "y.npy"), mmap_mode="r")
+        else:
+            x, mask, y = read_cache(self.cache_dir, rec["pid"])
+
+        expected_x = (len(self.phases),) + self.shape
+        expected_mask = (1,) + self.shape
+        if tuple(x.shape) != expected_x or tuple(mask.shape) != expected_mask:
+            raise ValueError(
+                f"pid={rec['pid']} 缓存形状不匹配：x={x.shape}（期望 {expected_x}），"
+                f"mask={mask.shape}（期望 {expected_mask}）；请检查期相、mask_mode 和网格。"
+            )
+        x = np.asarray(x, dtype=np.float32) / 255.0
+        mask = np.asarray(mask, dtype=np.float32)
+        model_input = np.concatenate([x, mask], axis=0)
+        return {
+            "pid": rec["pid"],
+            "x": torch.from_numpy(model_input),
+            "y": torch.from_numpy(np.array(y, dtype=np.int64, copy=True)),
+            "sequence": rec["sequence"],
+            "tier": rec["tier"],
+            "wc": rec["wc"],
+        }
+
+def rlc_collate(batch: List[dict]) -> dict:
+    x = torch.stack([item["x"] for item in batch])
+    max_seq_len = max(item["y"].numel() for item in batch)
+    y = torch.full((len(batch), max_seq_len), RLCTokenizer.PAD, dtype=torch.long)
+    for idx, item in enumerate(batch):
+        y[idx, :item["y"].numel()] = item["y"]
+    return {
+        "x": x, "y": y,
+        "pid": [item["pid"] for item in batch],
+        "sequence": [item["sequence"] for item in batch],
+        "tier": [item["tier"] for item in batch],
+        "wc": [item["wc"] for item in batch],
+    }
+
+
 class MultiphasePretrain(Dataset):
     def __init__(self, data_path: str, pid_csv: str, tokenizer: CharTokenizer,
                  cache_dir: str = DEFAULT_CACHE, max_len: int = 768,
