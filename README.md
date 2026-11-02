@@ -8,10 +8,10 @@
 Liver/
 ├── config/                    # 各模型配置文件
 │   └── {YYMMDD}_{模型名称}_{可选}.yaml
-├── data/                      # 数据相关（私有数据，不进仓库）
+├── data/                      # 数据相关
 │   ├── Dataset/               # 数据集加载函数，命名 XXX_dataset.py
 │   ├── split_idx/260925_SSL   # 数据集划分索引
-│   └── data.xlsx              # 影像数据索引+报告文本
+│   └── data.xlsx              # 影像数据索引+报告文本（私有数据不进仓库，请到服务器上/home/longkaixing/Liver/data/data.xlsx查看）
 ├── eval/                      # 评估脚本，命名 eval_{模型名称}.py
 ├── model_save/                # 模型权重（不进仓库）
 │   └── {YYMMDD}_{模型名称}_{可选}/ 
