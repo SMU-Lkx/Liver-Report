@@ -1,5 +1,6 @@
 # config/MRI2Rep/261029_MRI2Rep_4p.yaml
 # - train/train_MRI2Rep.py
+# 出现[序列不完整]的结果原因：自回归预测，提前输出了[EOS]符号，RLC序列不完整。
 
 
 save_name: 261029_MRI2Rep_4p

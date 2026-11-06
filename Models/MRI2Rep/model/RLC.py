@@ -899,7 +899,7 @@ def parse_args() -> argparse.Namespace:  # todo
     parser = argparse.ArgumentParser(description="中文报告 → MRI2Rep RLC（官方流程中文适配）")
     parser.add_argument("--command", choices=["extract", "recover", "rerun", "build"],
                         help='按顺序执行，build后再一次recover、build更新汇总表格',
-                        default="build")
+                        default="extract")
     parser.add_argument("--data",
                         default="/home/longkaixing/Liver/data/data.xlsx")
     parser.add_argument("--split-dir",
@@ -907,7 +907,7 @@ def parse_args() -> argparse.Namespace:  # todo
     parser.add_argument("--out-dir",
                         default="/home/longkaixing/Liver/Models/MRI2Rep/RLC_report")
     parser.add_argument("--splits", nargs="+", choices=["train", "val", "test"],
-                        default=["test"])
+                        default=["train"])
     parser.add_argument("--limit", type=int,
                         help="extract：每个 split 取前 N 例；rerun：前 N 个待重跑病例；0=全部",
                         default=0)

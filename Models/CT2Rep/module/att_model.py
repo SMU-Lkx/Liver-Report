@@ -1,4 +1,4 @@
-# Models/CT2Rep/modules/att_model.py
+# Models/CT2Rep/module/att_model.py
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -8,8 +8,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.rnn import PackedSequence, pack_padded_sequence, pad_packed_sequence
 
-import Models.CT2Rep.modules.utils as utils
-from Models.CT2Rep.modules.caption_model import CaptionModel
+import Models.CT2Rep.module.utils as utils
+from Models.CT2Rep.module.caption_model import CaptionModel
 
 
 def sort_pack_padded_sequence(input, lengths):

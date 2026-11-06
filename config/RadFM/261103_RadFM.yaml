@@ -1,0 +1,38 @@
+# config/RadFM/261103_RadFM.yaml
+# - train/train_RadFM.py
+
+# ---- 实验
+save_name: 261103_RadFM
+save_dir: /home/longkaixing/Liver/model_save
+
+# ---- 数据
+data: /home/longkaixing/Liver/data/data.xlsx
+sampler: /home/longkaixing/Liver/data/split_idx/260925_SSL
+cache_dir: /data/longkaixing/Liver/Multiphase_RadFM
+shape: [256, 256, 64]
+norm: minmax
+mask_mode: none  # RadFM不使用mask
+max_len: 768  # RadFM不使用y.npy而是读取meta.json，因此此处随意（y.npy内存占用不高）
+
+# ---- 模型
+lang_model_path: /home/longkaixing/Liver/Models/RadFM/ckpt/Language_files  # MedLLaMA-13B 医学语言模型
+ckpt: /public/longkaixing/home/Liver/RadFM/ckpt/RadFM.bin  # RadFM模型权重
+kebert_path: /home/longkaixing/Liver/Models/RadFM/ckpt/MedKEBERT  # 医学知识增强BERT。没有实际调用，但RadFM权重需要。
+lora_r: 16
+lora_alpha: 32
+lora_dropout: 0.05
+
+# ---- 训练
+device: 5
+epochs: 4
+lr: 0.0001
+log_every: 20
+prompt_max_len: 2048
+phases: [NC, Arterial, Venous, Delay]
+seed: 42
+resume: 0
+max_keep_epochs: 4    # 只留最近 4 个 adapter 快照
+save_freq: 1
+
+# ---- 推理
+max_new_tokens: 512  # 生成文本token上限

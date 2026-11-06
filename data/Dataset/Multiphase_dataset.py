@@ -4,7 +4,7 @@ Multiphase liver CT + liver mask + report-text dataset (MRI2Rep-style baseline).
 
 几何处理（重要）:
   - 各期相先做 nib.as_closest_canonical(RAS 规范化), 再重采样到统一目标网格;
-  - 目标网格以 Venous 的解剖范围为世界参考(F不变), 体素尺寸统一缩放到 (224,224,160);
+  - 目标网格以 Venous 的解剖范围为世界参考(F不变), 体素尺寸统一缩放到 shape;
   - 期相覆盖不到的 z 区域填空气(-1000 -> 0), 保证"同一 voxel = 同一解剖位置";
   - 构建时自动计算各期 mask 与 Venous mask 的 Dice, <0.3 告警。
 
@@ -36,6 +36,7 @@ import torch
 import nibabel as nib
 from nibabel.processing import resample_from_to
 from torch.utils.data import Dataset
+from util.train_utils import load_config
 
 PHASE_ORDER = ["NC", "Arterial", "Venous", "Delay"]
 VENOUS_IDX = PHASE_ORDER.index("Venous")
@@ -89,20 +90,28 @@ def _target_affine(ref_img, shape=SHAPE) -> np.ndarray:
     return t
 
 
-def prep_volume_to_grid(nii_path: str, target_aff: np.ndarray) -> np.ndarray:
-    """RAS 规范化 + 重采样到统一网格 -> [1,H,W,D] float32 [0,1]; 覆盖外填空气."""
+def prep_volume_to_grid(nii_path: str, target_aff: np.ndarray,
+                        shape=SHAPE, norm: str = "hu") -> np.ndarray:
+    """RAS 规范化 + 重采样到统一网格 -> [1,H,W,D] float32 [0,1]; 覆盖外填空气.
+    norm="hu"    : HU 窗口 [-1000,1000] 线性映射（原默认行为，不变）
+    norm="minmax": 纯 min-max（RadFM 复现；不 clip，FOV 外 -1000 -> 0，与论文 cval=-1000 一致）
+    """
     img = nib.as_closest_canonical(nib.load(nii_path))
-    out = resample_from_to(img, (SHAPE, target_aff), order=1,
+    out = resample_from_to(img, (shape, target_aff), order=1,
                            mode="constant", cval=-1000.0)
-    x = np.clip(out.get_fdata().astype(np.float32), HU_MIN, HU_MAX)
-    x = (x - HU_MIN) / (HU_MAX - HU_MIN)
+    x = out.get_fdata().astype(np.float32)
+    if norm == "minmax":
+        x = (x - x.min()) / (x.max() - x.min() + 1e-8)
+    else:
+        x = np.clip(x, HU_MIN, HU_MAX)
+        x = (x - HU_MIN) / (HU_MAX - HU_MIN)
     return x[None]
 
 
-def prep_mask_to_grid(nii_path: str, target_aff: np.ndarray) -> np.ndarray:
+def prep_mask_to_grid(nii_path: str, target_aff: np.ndarray, shape=SHAPE) -> np.ndarray:
     """RAS 规范化 + 最近邻重采样 -> [1,H,W,D] uint8 {0,1}; 覆盖外填 0."""
     img = nib.as_closest_canonical(nib.load(nii_path))
-    out = resample_from_to(img, (SHAPE, target_aff), order=0,
+    out = resample_from_to(img, (shape, target_aff), order=0,
                            mode="constant", cval=0.0)
     return (out.get_fdata() > 0.5).astype(np.uint8)[None]
 
@@ -203,18 +212,19 @@ def _patient_dir(cache_dir: str, pid: str) -> str:
 
 
 def write_cache(rec: dict, tokenizer: CharTokenizer, cache_dir: str,
-                max_len: int, mask_mode: str) -> None:
+                max_len: int, mask_mode: str,
+                shape=SHAPE, norm: str = "hu") -> None:
     out = _patient_dir(cache_dir, rec["pid"])
     os.makedirs(out, exist_ok=True)
 
     ref_img = nib.as_closest_canonical(nib.load(rec["imgs"]["Venous"]))
-    target_aff = _target_affine(ref_img)
+    target_aff = _target_affine(ref_img, shape=shape)
 
     vols, msks = {}, {}
-    for ph in tqdm.tqdm(PHASE_ORDER):
-        vols[ph] = prep_volume_to_grid(rec["imgs"][ph], target_aff)[0]
-        msks[ph] = (prep_mask_to_grid(rec["masks"][ph], target_aff)[0]
-                    if rec["masks"][ph] else np.zeros(SHAPE, np.uint8))
+    for ph in PHASE_ORDER:
+        vols[ph] = prep_volume_to_grid(rec["imgs"][ph], target_aff, shape=shape, norm=norm)[0]
+        msks[ph] = (prep_mask_to_grid(rec["masks"][ph], target_aff, shape=shape)[0]
+                    if rec["masks"][ph] else np.zeros(shape, np.uint8))
     x = np.stack([vols[ph] for ph in PHASE_ORDER], axis=0)   # (4,H,W,D) float32
 
     # 对齐质检: 各期 mask 与 Venous mask 的 Dice(覆盖差异会拉低, 不应极低)
@@ -225,7 +235,7 @@ def write_cache(rec: dict, tokenizer: CharTokenizer, cache_dir: str,
               f"check world alignment of phase affines!")
 
     if mask_mode == "none":
-        mask = np.zeros((0,) + SHAPE, np.uint8)
+        mask = np.zeros((0,) + tuple(shape), np.uint8)
     else:
         m_ph = PHASE_ORDER if mask_mode == "stack" else ["Venous"]
         mask = np.stack([msks[ph] for ph in m_ph], axis=0)
@@ -235,7 +245,9 @@ def write_cache(rec: dict, tokenizer: CharTokenizer, cache_dir: str,
     np.save(os.path.join(out, "mask.npy"), mask)
     np.save(os.path.join(out, "y.npy"), y)
     with open(os.path.join(out, "meta.json"), "w", encoding="utf-8") as f:
-        json.dump({"text": rec["text"], "impression": rec["impression"]}, f, ensure_ascii=False)
+        json.dump({"text": rec["text"], "impression": rec["impression"],
+                   "shape": list(shape), "norm": norm},   # [RadFM复现] 缓存自描述
+                  f, ensure_ascii=False)
 
 
 def read_cache(cache_dir: str, pid: str):
@@ -253,10 +265,12 @@ class MultiphaseReport(Dataset):
     def __init__(self, data_path: str, pid_csv: str, tokenizer: CharTokenizer,
                  cache_dir: str = DEFAULT_CACHE, max_len: int = 768,
                  mask_mode: str = "venous", build_if_missing: bool = True,
+                 cache_shape=SHAPE, cache_norm: str = "hu",
                  **rec_kwargs):
         assert mask_mode in {"venous", "stack", "none"}
         self.tok, self.max_len = tokenizer, int(max_len)
         self.cache_dir, self.mask_mode, self.build = cache_dir, mask_mode, build_if_missing
+        self.cache_shape, self.cache_norm = tuple(cache_shape), cache_norm
         self.records = load_records(data_path, pid_csv, **rec_kwargs)
 
     def __len__(self):
@@ -267,7 +281,8 @@ class MultiphaseReport(Dataset):
         if not _cache_ready(self.cache_dir, rec["pid"]):
             if not self.build:
                 raise FileNotFoundError(rec["pid"])
-            write_cache(rec, self.tok, self.cache_dir, self.max_len, self.mask_mode)
+            write_cache(rec, self.tok, self.cache_dir, self.max_len, self.mask_mode,
+                        shape=self.cache_shape, norm=self.cache_norm)
         x, mask, y = read_cache(self.cache_dir, rec["pid"])
         with open(os.path.join(_patient_dir(self.cache_dir, rec["pid"]), "meta.json"),
                   encoding="utf-8") as f:
@@ -623,7 +638,8 @@ def pretrain_collate(batch: List[dict]) -> dict:
 # ---------------------------------------------------------------------------
 def build_all(data_path: str, split_dir: str, cache_dir: str,
               tokenizer: CharTokenizer, max_len: int = 768,
-              mask_mode: str = "venous", verify_paths: bool = False) -> None:
+              mask_mode: str = "venous", verify_paths: bool = False,
+              shape=SHAPE, norm: str = "hu") -> None:
     manifest = []
     for split in ("train", "val", "test"):
         csv = os.path.join(split_dir, f"{split}_idx.csv")
@@ -631,35 +647,39 @@ def build_all(data_path: str, split_dir: str, cache_dir: str,
             print(f"[build_all] skip missing {csv}")
             continue
         recs = load_records(data_path, csv, verify_paths=verify_paths)
-        for rec in recs:
+        for rec in tqdm.tqdm(recs, desc=f"build[{split}]"):
             if not _cache_ready(cache_dir, rec["pid"]):
-                write_cache(rec, tokenizer, cache_dir, max_len, mask_mode)
+                write_cache(rec, tokenizer, cache_dir, max_len, mask_mode, shape=shape, norm=norm)
             manifest.append({"id": rec["pid"], "cache_dir": _patient_dir(cache_dir, rec["pid"]),
                              "split": split, "text": rec["text"], "impression": rec["impression"]})
         print(f"[build_all] {split}: {len(recs)} patients cached")
     with open(os.path.join(cache_dir, "manifest.json"), "w", encoding="utf-8") as f:
         json.dump(manifest, f, ensure_ascii=False, indent=1)
     print(f"[build_all] manifest -> {os.path.join(cache_dir, 'manifest.json')}")
+    print(f"[build] cache_dir={args.cache_dir} shape={tuple(args.shape)} "
+          f"norm={args.norm} mask_mode={args.mask_mode}")
 
 
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", default="/home/longkaixing/Liver/data/data.xlsx")
-    ap.add_argument("--split-dir", default="/home/longkaixing/Liver/data/split_idx/260925_SSL")
-    ap.add_argument("--out", default=DEFAULT_CACHE)
-    ap.add_argument("--max-len", type=int, default=768)
-    ap.add_argument("--mask-mode", default="venous", choices=["venous", "stack", "none"])
+    ap.add_argument("--cfg",  # todo
+                    # default="/home/longkaixing/Liver/config/MRI2Rep/261029_MRI2Rep_4p.yaml")
+                    default='/home/longkaixing/Liver/config/RadFM/261103_RadFM.yaml')
     ap.add_argument("--verify-paths", action="store_true")
     args = ap.parse_args()
+    config = load_config(args.cfg)
+    for key, value in config.items():
+        setattr(args, key, value)
 
     df = pd.read_excel(args.data)
     df["id"] = df["id"].astype(str)
-    train_pids = set(pd.read_csv(os.path.join(args.split_dir, "train_idx.csv"))["id"].astype(str))
+    train_pids = set(pd.read_csv(os.path.join(args.sampler, "train_idx.csv"))["id"].astype(str))
     tok = CharTokenizer.build([str(t) for t in df.loc[df["id"].isin(train_pids), "report_desc"].dropna()])
-    tok.save(os.path.join(args.out, "vocab.json"))
+    tok.save(os.path.join(args.cache_dir, "vocab.json"))
     print(f"[tokenizer] vocab_size={tok.vocab_size}")
     # 构建缓存
-    build_all(args.data, args.split_dir, args.out, tok,
-              max_len=args.max_len, mask_mode=args.mask_mode,
-              verify_paths=args.verify_paths)
+    build_all(args.data, args.sampler, args.cache_dir, tok,
+              max_len=args.max_len, mask_mode=args.mask_mode, verify_paths=args.verify_paths, 
+              shape=tuple(args.shape), norm=args.norm)
+    

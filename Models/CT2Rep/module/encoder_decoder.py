@@ -1,4 +1,4 @@
-# Models/CT2Rep/modules/encoder_decoder.py
+# Models/CT2Rep/module/encoder_decoder.py
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from Models.CT2Rep.modules.att_model import pack_wrapper, AttModel
+from Models.CT2Rep.module.att_model import pack_wrapper, AttModel
 
 
 def clones(module, N):

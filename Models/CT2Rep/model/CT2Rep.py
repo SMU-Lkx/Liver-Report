@@ -9,7 +9,7 @@
 import torch
 import torch.nn as nn
 from Models.CT2Rep.model.ctvit import CTViT
-from Models.CT2Rep.modules.encoder_decoder import EncoderDecoder
+from Models.CT2Rep.module.encoder_decoder import EncoderDecoder
 
 
 class CharTokenizerAdapter:

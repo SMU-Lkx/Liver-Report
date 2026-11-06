@@ -1,15 +1,15 @@
 # eval/eval_MRI2Rep.py
 """
 eval_MRI2Rep.py — MRI2Rep-RLC 渲染报告评估。
-
-主指标:  官方结构化指标（LiverAcc / Sen / Spe / pair-F1 micro / triplet-F1 micro，
-         口径与训练 validate 完全一致——复用 train_MRI2Rep.parse_sequence/f1_*）。
-辅指标:  corpus 级 char-BLEU2/4 + char-ROUGE-L（渲染稿 vs GT渲染稿；
+指标1:  corpus 级 char-BLEU2/4 + char-ROUGE-L（渲染稿 vs GT渲染稿；
          模板主导、仅作 NLG 层面对齐，对应官方 evaluate_nlg.py 的位置）。
-输出结构与 eval_CT2Rep.py 完全对齐:
+指标2:  官方结构化指标（LiverAcc / Sen / Spe / pair-F1 micro / triplet-F1 micro，
+         口径与训练 validate 完全一致——复用 train_MRI2Rep.parse_sequence/f1_*）。
+输出结构与 eval_CT2Rep.py 完全对齐（可直接被 eval/text_histogram.py 利用）:
   eval/test_metrics.json / test_metrics.csv（经 util.val_utils.eval_outputs）
   eval/eval_csv/test_cases.csv（逐例: nll/序列匹配/报告长度/pair-F1）
-无模型、无 NPU，纯 CPU 秒级。
+  eval/out_sample/{pid}/{gen.txt, ref.txt, diff.html, meta.json} + {tag}_ep{epoch}_all.txt
+    (gen=预测渲染稿, ref=GT渲染稿; text_sampling 落盘, 与 CT2Rep 同一调用)
 
 用法:
   python -m eval.eval_MRI2Rep \
@@ -31,6 +31,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from data.Dataset.Multiphase_dataset import RLCTokenizer
 from train.train_MRI2Rep import parse_sequence, f1_from_sets, f1_from_counters
 from util.text_utils import sacre_bleu_zh, char_rouge_l
+from util.train_utils import text_sampling
 from util.val_utils import eval_outputs
 
 _TOK = RLCTokenizer()
@@ -125,6 +126,19 @@ def main() -> int:
         "avg_ref_len": round(float(np.mean([len(s) for s in refs_l])), 1),
         "note": "主指标为官方结构化指标；BLEU/ROUGE 为渲染稿vs GT渲染稿的模板主导辅指标",
     }
+
+    # ---- out_sample 落盘: 与 eval_CT2Rep 同一 text_sampling 调用 ----
+    records = [{"pid": r["pid"], "gen": r["pred_report"], "ref": r["gt_report"]}
+               for r in cases]
+    epoch_tag = int(float(cases[0].get("epoch", 0) or 0))
+    st = text_sampling(records, eval_dir, epoch=max(epoch_tag, 0), prefix=args.tag)
+    for r in cases:   # text_sampling 不写 ref.txt, MRI2Rep 的参照是 GT 渲染稿
+        d = Path(eval_dir) / "out_sample" / str(r["pid"])
+        d.mkdir(parents=True, exist_ok=True)
+        with open(d / "ref.txt", "w", encoding="utf-8") as f:
+            f.write(r["gt_report"])
+    metrics["epoch"] = epoch_tag
+    metrics["rep_ratio"] = st["rep_ratio"]
 
     eval_outputs(metrics, rows, eval_dir, tag=args.tag)
     print(json.dumps(metrics, ensure_ascii=False, indent=1))

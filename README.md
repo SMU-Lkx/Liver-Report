@@ -24,7 +24,8 @@ Liver/
 │   ├── M3D/
 │   ├── Merlin/
 │   ├── MRI2Rep/
-│   └── RadFM/
+│   ├── RadFM/
+│   └── Reg2RG/
 ├── train/                     # 训练脚本，命名 train_{模型名称}.py
 ├── util/                      # 工具函数
 │   ├── text_utils.py          # 字符评估工具：ngram 计数、字符级 BLEU 等
@@ -44,9 +45,10 @@ Liver/
 | **M3D** | [M3D: Advancing 3D Medical Image Analysis with Multi-Modal Large Language Models](https://arxiv.org/abs/2404.00578) | [BAAI-DCAI/M3D](https://github.com/BAAI-DCAI/M3D) | 待复现 |
 | **CT2Rep** | [CT2Rep: Automated Radiology Report Generation for 3D Medical Imaging](https://arxiv.org/abs/2403.06801) (MICCAI 2024) | [ibrahimethemhamamci/CT2Rep](https://github.com/ibrahimethemhamamci/CT2Rep) | 已复现 |
 | **Merlin** | [Merlin: a computed tomography vision–language foundation model and dataset](https://arxiv.org/abs/2406.06512) (Nature 2026) | [StanfordMIMI/Merlin](https://github.com/StanfordMIMI/Merlin) | 待复现 |
-| **RadFM** | [Towards Generalist Foundation Model for Radiology by Leveraging Web-scale 2D&3D Medical Data](https://doi.org/10.1038/s41467-025-62385-7) (Nature Communications 2025) | [chaoyi-wu/RadFM](https://github.com/chaoyi-wu/RadFM) | 待复现 |
+| **RadFM** | [Towards Generalist Foundation Model for Radiology by Leveraging Web-scale 2D&3D Medical Data](https://doi.org/10.1038/s41467-025-62385-7) (Nature Communications 2025) | [chaoyi-wu/RadFM](https://github.com/chaoyi-wu/RadFM) | 已复现 |
 | **MRI2Rep** | [MRI2Rep: Autoregressive Structured Report Generation for 3D Liver MRI](https://arxiv.org/abs/2606.25279) (MICCAI 2026) | [Alena-Xinran/MRI2Rep](https://github.com/Alena-Xinran/MRI2Rep) | 已复现 |
 | **Astra** | [Astra: a generalizable report generation foundation model for 3D computed tomography](https://arxiv.org/abs/2605.31437) | [zh-Wang-Med/Astra](https://github.com/zh-Wang-Med/Astra) | 待复现 |
+| **Reg2RG** | [Large Language Model With Region-Guided Referring and Grounding for CT Report Generation](https://doi.org/10.1109/TMI.2025.3559923) | [zhi-xuan-chen/Reg2RG](https://github.com/zhi-xuan-chen/Reg2RG) | 待复现 |
 
 
 ## 复现安排
@@ -59,6 +61,7 @@ Liver/
 | **RadFM**   | 利用公开权重，冻结视觉编码器，训练perceiver + LLM-LoRA | 龙楷兴 | 2026.11.02~2026.11.12 |
 | **MRI2Rep** | 端到端从头训练                                         | 龙楷兴 | 2026.10.23~2026.11.01 |
 | **Astra**   | 利用公开权重，冻结视觉编码器，训练perceiver + LLM-LoRA | 杨兰   | 2026.10.23~2026.11.01 |
+| **Reg2RG**  | 利用公开权重，冻结视觉编码器，训练perceiver + LLM-LoRA | 龙楷兴 | 2026.11.06~2026.11.15 |
 
 
 ## 复现进度
@@ -70,9 +73,10 @@ Liver/
 | M3D     |         |         |           |       |       |        |            |
 | CT2Rep  | 0.6217  | 0.5637  | 0.6718    |       |       |        |            |
 | Merlin  |         |         |           |       |       |        |            |
-| RadFM   |         |         |           |       |       |        |            |
+| RadFM   | 0.3628  | 0.3370  | 0.5966    |       |       |        |            |
 | MRI2Rep | 0.6750  | 0.6291  | 0.6953    |       |       |        |            |
 | Astra   |         |         |           |       |       |        |            |
+| Reg2RG  |         |         |           |       |       |        |            |
 
 ## 使用约定
 

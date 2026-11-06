@@ -138,9 +138,11 @@ def plot_hist(gen_df: pd.DataFrame, ref_df: pd.DataFrame, out_png: str, topk: in
 
 # ---------------- main ----------------
 def main():
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser()  # todo
     ap.add_argument("--eval_dir", help="eval_{model}.py 的输出目录, 如 model_save/261020_CT2Rep/eval",
-                    default='/home/longkaixing/Liver/model_save/261020_CT2Rep/eval')
+                    # default='/home/longkaixing/Liver/model_save/261020_CT2Rep/eval')
+                    # default='/home/longkaixing/Liver/model_save/261029_MRI2Rep_4p/eval')
+                    default='/home/longkaixing/Liver/config/RadFM/261103_RadFM')
     ap.add_argument("--data",
                     default=str(PROJECT_ROOT / "data/data.xlsx"))
     ap.add_argument("--split_csv",

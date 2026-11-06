@@ -1,4 +1,4 @@
-# Models/CT2Rep/modules/caption_model.py
+# Models/CT2Rep/module/caption_model.py
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-import Models.CT2Rep.modules.utils as utils
+import Models.CT2Rep.module.utils as utils
 
 
 class CaptionModel(nn.Module):
